@@ -1,0 +1,32 @@
+{
+  "created": "2026-05-31",
+  "notes": "Best parameters from pilot tuning on 4 brain FOVs (AD + Control, F + H regions). TopHat+cpsam gave ~1200 cells vs CosMx reference 341. QuPath count ~947.",
+  "enhancement": {
+    "method": "TopHat",
+    "tophat_radius_px": 20,
+    "use_clahe": false,
+    "clahe_clip_limit": 0.03,
+    "rolling_ball_radius_px": 50,
+    "brightness": 0.0,
+    "contrast": 1.0,
+    "gamma": 1.0,
+    "denoise_median_k": 0,
+    "sharpen": 0.0
+  },
+  "cellpose": {
+    "model": "cpsam",
+    "diameter": 25,
+    "cellprob_threshold": -1.0,
+    "flow_threshold": 0.6,
+    "channel": 0,
+    "expand_distance_px": 5,
+    "min_cell_area_px": 50,
+    "fill_holes": false
+  },
+  "pilot_results": {
+    "FOV00001_AD_F": {"cosmx_cells": 521, "cpsam_cells": 597, "median_diam_px": 30.1},
+    "FOV00007_AD_H": {"cosmx_cells": 648, "cpsam_cells": 664, "median_diam_px": 38.4},
+    "FOV00037_Control_F": {"cosmx_cells": null, "cpsam_cells": null, "median_diam_px": null},
+    "FOV00043_Control_H": {"cosmx_cells": null, "cpsam_cells": null, "median_diam_px": null}
+  }
+}

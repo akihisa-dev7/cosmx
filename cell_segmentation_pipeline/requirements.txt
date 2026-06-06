@@ -1,0 +1,28 @@
+# cell_segmentation_pipeline dependencies
+# Install with: pip install -r cell_segmentation_pipeline/requirements.txt
+
+# Core image processing
+tifffile>=2024.0.0
+imagecodecs>=2024.0.0    # required for LZW-compressed CosMx TIFFs
+scikit-image>=0.22.0
+scipy>=1.12.0
+
+# Segmentation models
+cellpose>=3.0.0
+stardist>=0.8.5
+# instanseg-torch  # optional; install separately if needed
+
+# Data & numerics
+numpy>=1.26.0
+pandas>=2.1.0
+
+# Visualisation
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# Config
+PyYAML>=6.0.0
+
+# UI (optional)
+streamlit>=1.35.0
+Pillow>=10.0.0

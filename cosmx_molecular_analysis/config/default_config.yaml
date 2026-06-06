@@ -1,0 +1,46 @@
+paths:
+  segmentation_root: outputs/pilot_4fov
+  rna_flatfiles: raw_data/pilot_4fov/slide1_RNA/flatfiles
+  protein_flatfiles: raw_data/pilot_4fov/slide1_protein/flatfiles
+  output_root: outputs/cosmx_molecular_analysis
+
+fovs:
+  - FOV00001
+  - FOV00007
+  - FOV00037
+  - FOV00043
+
+assignment:
+  method: mask_lookup
+  min_qv: 20
+  exclude_prefixes:
+    - NegPrb
+    - FalseCode
+
+qc:
+  min_transcripts_per_cell: 5
+  max_transcripts_per_cell: 5000
+  min_genes_per_cell: 3
+  max_negative_probe_fraction: 0.10
+  min_cell_area_um2: 10
+  max_cell_area_um2: 8000
+
+normalization:
+  rna_method: log1p
+  protein_method: clr
+  target_sum: 10000
+
+clustering:
+  n_pcs: 30
+  n_neighbors: 15
+  resolution: 0.5
+  n_top_genes: 2000
+
+cell_typing:
+  min_score_margin: 0.15
+  low_confidence_label: LowConfidence
+  marker_genes_file: cosmx_molecular_analysis/config/marker_genes.yaml
+
+spatial:
+  coordinate_key: spatial
+  neighbor_radius_px: 100

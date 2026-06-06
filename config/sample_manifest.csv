@@ -1,0 +1,5 @@
+slide,fov,condition,region,sample_id,gender,age,tissue_type,notes
+1,FOV00001,AD,F,1,M,88,Brain_Frontal,pilot_fov
+1,FOV00007,AD,H,1,M,88,Brain_Hippocampus,pilot_fov
+1,FOV00037,Control,F,4,M,68,Brain_Frontal,pilot_fov
+1,FOV00043,Control,H,4,M,68,Brain_Hippocampus,pilot_fov

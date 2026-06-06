@@ -1,0 +1,47 @@
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ===== Large data directories (not tracked in git) =====
+outputs/
+outputs_ssd/
+raw_data/
+results/
+
+# ===== Large binary / generated files =====
+*.h5ad
+*.h5
+*.hdf5
+*.csv.gz
+*.tif
+*.tiff
+
+# Re-include small ground truth annotations
+!annotation_tools/ground_truth/*.tif
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== Logs =====
+*.log
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== Claude Code local settings =====
+.claude/

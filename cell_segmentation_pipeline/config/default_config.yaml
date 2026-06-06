@@ -1,0 +1,76 @@
+##############################################################################
+# cell_segmentation_pipeline — default configuration
+# Based on CosMx_2026 pilot tuning results (seg_best_params.json, 2026-05-31)
+##############################################################################
+
+input:
+  image_dir: raw_data/pilot_4fov/slide1_RNA/morphology_images
+  manifest:  config/sample_manifest.csv
+  channel: 0          # 0=DAPI (primary), 1=PanCK, 2=G, 3=Membrane, 4=CD45
+  fovs: null          # null = process all FOVs found; or list e.g. [FOV00001, FOV00007]
+
+morphology_channels:
+  DAPI:     0
+  PanCK:    1
+  G:        2
+  Membrane: 3
+  CD45:     4
+
+preprocessing:
+  method: tophat          # tophat | rolling_ball | clahe | none
+  tophat_radius_px: 20    # best from pilot tuning
+  rolling_ball_radius_px: 50
+  use_clahe: false
+  clahe_clip_limit: 0.03
+  comparison_radii: [10, 15, 20, 25]   # radii used in save_comparison_png
+
+segmentation:
+  default_model: cellpose_cpsam
+
+  cellpose:
+    cpsam:
+      diameter: 25
+      cellprob_threshold: -1.0
+      flow_threshold: 0.6
+    nuclei:
+      diameter: 20
+      cellprob_threshold: -1.0
+      flow_threshold: 0.6
+    cyto3:
+      diameter: 28
+      cellprob_threshold: -1.0
+      flow_threshold: 0.6
+
+  stardist:
+    model: 2D_versatile_fluo
+    prob_threshold: 0.5
+    nms_threshold: 0.3
+    scale: 2.0
+
+  instanseg:
+    model: fluorescence_nuclei_and_cells
+    target: nuclei
+
+  expansion:
+    expand_px: 5          # best from pilot; alternatives: 0, 3, 8, 10
+    min_area_px: 50       # discard masks smaller than this after expansion
+
+qc:
+  min_cell_area_px: 50
+  max_cell_area_px: 10000
+  # approximate um2 thresholds (pixel_size=0.120274 µm/px → 1px²≈0.01447 µm²)
+  min_cell_area_um2: 10
+  max_cell_area_um2: 8000
+
+output:
+  root: outputs/cell_segmentation_pipeline
+  # sub-dirs are created automatically
+  # enhanced/        {FOV}_enhanced.tif
+  # masks/           {FOV}_{model}_nuclear_mask.tif
+  # expanded_masks/  {FOV}_{model}_expanded_mask.tif
+  # overlays/        {FOV}_{model}_overlay.png
+  # cell_tables/     {FOV}_{model}_cells.csv
+  # qc/panels/       {FOV}_{model}_qc_panel.png
+  # qc/qc_summary.csv
+  # qc/size_distribution.png
+  # qc/cellcount_comparison.png

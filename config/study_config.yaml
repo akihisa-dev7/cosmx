@@ -1,0 +1,136 @@
+##############################################################################
+# CosMx 2026 Study Configuration
+# Dementia CosMx project — GO lab, Kyoto University
+# Two slides: RNA 6K Discovery panel, 72 FOVs each
+##############################################################################
+
+study:
+  name: "GOlab_CosMx_Dementia_2026"
+  panel: "Human RNA 6k Discovery"
+  pixel_size_um: 0.120274  # CosMx instrument pixel size (µm/px)
+
+# ── Data paths ────────────────────────────────────────────────────────────────
+paths:
+  ssd_root: "/home/shamim/CosMx_2026/raw_data/pilot_4fov"
+
+  slide1:
+    study_dir:     "Study20251223_GOlab_cosmxrna1"
+    slide_id:      "2511276KSlide116"
+    run_id:        "20251127_074826_S1"
+    flat_dir:      "slide1_RNA/flatfiles"
+    cell_stats_dir: "slide1_RNA/per_fov_decoded"
+    morphology2d:  "slide1_RNA/morphology_images"
+    run_prefix:    "Run_833ea100-30b5-4fe2-a59d-1189fffeeb46"
+    n_fovs:        72
+
+  slide2:
+    study_dir:     "Study20251223_GOlab_cosmxrna2"
+    slide_id:      "2511276KSlide2712"
+    run_id:        "20251127_074826_S2"
+    flat_dir:      "Study20251223_GOlab_cosmxrna2/flatFiles/2511276KSlide2712"
+    cell_stats_dir: "Study20251223_GOlab_cosmxrna2/DecodedFiles/2511276KSlide2712/20251127_074826_S2/CellStatsDir"
+    morphology2d:  "Study20251223_GOlab_cosmxrna2/DecodedFiles/2511276KSlide2712/20251127_074826_S2/CellStatsDir/Morphology2D"
+    run_prefix:    "Run_833ea100-30b5-4fe2-a59d-1189fffeeb46"
+    n_fovs:        72
+
+  output_root: "/home/shamim/CosMx_2026/outputs"
+
+# ── Sample manifest (FOV → biological metadata) ────────────────────────────
+# Edit this table to cover all 72+ FOVs once the full layout is known.
+# Columns: slide, fov, condition, region, sample_id, gender, age, tissue_type
+sample_manifest: "config/sample_manifest.csv"
+
+# ── Morphology channel assignments ────────────────────────────────────────────
+morphology_channels:
+  # Index in multi-channel TIFF (0-based)
+  DAPI:      0   # nuclear stain → primary for segmentation
+  PanCK:     1   # epithelial marker
+  G:         2   # background / autofluorescence
+  Membrane:  3   # cell membrane (not always present)
+  CD45:      4   # immune marker (not always present)
+  primary_nuclear_ch: 0  # channel index used for segmentation by default
+
+# ── Image enhancement parameters (from pilot tuning) ─────────────────────────
+enhancement:
+  method: "TopHat"          # TopHat | Rolling Ball | TopHat+Rolling Ball | CLAHE only | None
+  tophat_radius_px: 20
+  rolling_ball_radius_px: 50
+  use_clahe: false
+  clahe_clip_limit: 0.03
+  brightness: 0.00
+  contrast: 1.00
+  gamma: 1.00
+  denoise_median_k: 0       # 0 = disabled
+  sharpen: 0.00
+
+# ── Segmentation parameters (best from pilot, cpsam on brain tissue) ─────────
+segmentation:
+  # Cellpose
+  cellpose:
+    models:
+      - name: cpsam
+        diameter: 25
+        cellprob_threshold: -1.0
+        flow_threshold: 0.6
+        channel: 0          # DAPI
+      - name: nuclei
+        diameter: 20
+        cellprob_threshold: -1.0
+        flow_threshold: 0.6
+        channel: 0
+      - name: cyto3
+        diameter: 28
+        cellprob_threshold: -1.0
+        flow_threshold: 0.6
+        channel: 0
+    expand_distance_px: 5
+    min_cell_area_px: 50
+    fill_holes: false
+
+  # StarDist
+  stardist:
+    model: "2D_versatile_fluo"
+    prob_threshold: 0.5
+    nms_threshold: 0.3
+    scale: 2.0
+    expand_distance_px: 5
+
+  # InstanSeg
+  instanseg:
+    model: "fluorescence_nuclei_and_cells"
+    target: "nuclei"           # nuclei | cells
+    expand_distance_px: 5
+
+# ── Transcript assignment parameters ──────────────────────────────────────────
+transcript_assignment:
+  method: "mask_lookup"        # mask_lookup | voronoi | kd_tree
+  z_planes_to_use: "all"       # all | max | [0,1,2]
+  min_qv: 20                   # minimum Phred-scaled quality value
+  exclude_negative_probes: true
+  exclude_false_codes: true
+  compartment_col: "CellComp"  # None | CellComp (nucleus / cytoplasm / None)
+
+# ── QC thresholds ─────────────────────────────────────────────────────────────
+qc:
+  min_transcripts_per_cell: 5
+  max_transcripts_per_cell: 5000
+  min_genes_per_cell: 3
+  max_neg_probe_fraction: 0.10   # flag cells where >10% counts are negative probes
+  min_cell_area_um2: 10
+  max_cell_area_um2: 8000
+
+# ── Clustering / downstream analysis ─────────────────────────────────────────
+analysis:
+  normalization: "scran"        # scran | log1p | tpm
+  n_hvg: 2000                   # highly variable genes
+  n_pcs: 30
+  n_neighbors: 15
+  leiden_resolution: 0.5
+  umap_min_dist: 0.3
+  batch_key: "sample_id"        # column used for Harmony batch correction
+
+# ── Spatial analysis (squidpy) ────────────────────────────────────────────────
+spatial:
+  n_rings: 1                   # for spatial neighbors
+  coord_type: "generic"        # generic | grid
+  n_jobs: 4

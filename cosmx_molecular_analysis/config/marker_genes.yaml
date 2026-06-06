@@ -1,0 +1,42 @@
+cell_types:
+  Neuron:
+    - SNAP25
+    - MAP2
+    - RBFOX3
+    - SYT1
+    - SYP
+
+  Astrocyte:
+    - GFAP
+    - AQP4
+    - ALDH1L1
+    - S100B
+
+  Microglia:
+    - AIF1
+    - C1QA
+    - C1QB
+    - C1QC
+    - TYROBP
+    - P2RY12
+    - TMEM119
+
+  Oligodendrocyte:
+    - MBP
+    - PLP1
+    - MOG
+    - OLIG2
+
+  OPC:
+    - PDGFRA
+    - CSPG4
+
+  Endothelial:
+    - CLDN5
+    - PECAM1
+    - FLT1
+
+  Pericyte_VSMC:
+    - ACTA2
+    - PDGFRB
+    - RGS5
