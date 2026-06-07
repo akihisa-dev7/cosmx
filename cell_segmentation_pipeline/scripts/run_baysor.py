@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run Baysor RNA-guided segmentation on CosMx pilot FOVs.
 
-Baysor jointly optimises transcript spatial density and a Cellpose nuclear
-prior to produce more accurate cell boundaries than DAPI-only segmentation.
+Baysor jointly optimises transcript spatial density and a nuclear prior mask
+(Cellpose, StarDist, InstanSeg, or CosMx native) to produce more accurate
+cell boundaries than DAPI-only segmentation.
 
 Prerequisites:
     1. Baysor binary installed:
@@ -14,27 +15,36 @@ Prerequisites:
        pip install anndata  # if not already installed
 
 Examples:
-    # Pilot 4 FOVs with Cellpose cpsam as prior
+    # Pilot 4 FOVs — Cellpose cpsam as prior (default)
     python cell_segmentation_pipeline/scripts/run_baysor.py \\
-        --tx_dir   outputs_ssd/proseg_pilot/ \\
+        --tx_dir    outputs_ssd/proseg_pilot/ \\
         --prior_dir outputs/pilot_4fov/masks/ \\
-        --output   outputs/baysor/ \\
+        --output    outputs/baysor/cellpose/ \\
         --fovs FOV00001 FOV00007 FOV00037 FOV00043
 
-    # Single FOV with custom parameters
+    # StarDist as prior (prior_dilation_px auto-set to 25)
+    python cell_segmentation_pipeline/scripts/run_baysor.py \\
+        --tx_dir    outputs_ssd/proseg_pilot/ \\
+        --prior_dir outputs/pilot_4fov/masks/ \\
+        --output    outputs/baysor/stardist/ \\
+        --prior_model stardist \\
+        --fovs FOV00001 FOV00007 FOV00037 FOV00043
+
+    # InstanSeg as prior
+    python cell_segmentation_pipeline/scripts/run_baysor.py \\
+        --tx_dir    outputs_ssd/proseg_pilot/ \\
+        --prior_dir outputs/pilot_4fov/masks/ \\
+        --output    outputs/baysor/instanseg/ \\
+        --prior_model instanseg \\
+        --fovs FOV00001 FOV00007 FOV00037 FOV00043
+
+    # Custom parameters
     python cell_segmentation_pipeline/scripts/run_baysor.py \\
         --tx_dir   outputs_ssd/proseg_pilot/ \\
         --prior_dir outputs/pilot_4fov/masks/ \\
-        --output   outputs/baysor/ \\
+        --output   outputs/baysor/cellpose/ \\
         --fovs FOV00001 \\
         --scale 10 --min_molecules 20 --prior_confidence 0.6
-
-    # Use CosMx native CellLabels as prior (fallback)
-    python cell_segmentation_pipeline/scripts/run_baysor.py \\
-        --tx_dir       outputs_ssd/proseg_pilot/ \\
-        --prior_dir    raw_data/pilot_4fov/slide1_RNA/per_fov_decoded/ \\
-        --prior_glob   "*/CellLabels_F*.tif" \\
-        --output       outputs/baysor/
 """
 from __future__ import annotations
 
@@ -58,21 +68,55 @@ def _fov_str_to_int(fov_str: str) -> int:
     return int(fov_str.lstrip("FOVf0") or "0")
 
 
-def _find_prior_mask(fov_str: str, prior_dir: Path, prior_glob: str) -> Path | None:
-    """Find the best prior mask for a given FOV ID string."""
-    fov_num = str(_fov_str_to_int(fov_str))
+# Keyword priority lists per prior model.
+# Each list is tried in order; the first match wins.
+_PRIOR_KEYWORDS: dict[str, list[str]] = {
+    "cellpose":  ["cpsam_nuclear", "cpsam", "cellpose", "nuclear_mask", "CellLabels"],
+    "stardist":  ["stardist_nuclear", "stardist"],
+    "instanseg": ["instanseg_nuclear", "instanseg"],
+    "cosmx":     ["cosmx_nuclear", "cosmx", "CellLabels"],
+    # auto = cellpose priority, fall through to stardist/instanseg/cosmx
+    "auto":      ["cpsam_nuclear", "cpsam", "cellpose",
+                  "stardist_nuclear", "stardist",
+                  "instanseg_nuclear", "instanseg",
+                  "cosmx_nuclear", "cosmx",
+                  "nuclear_mask", "CellLabels"],
+}
+
+# Default prior_dilation_px per model (StarDist is nuclei-only → needs more expansion)
+_PRIOR_DILATION_DEFAULTS: dict[str, int] = {
+    "cellpose":  15,
+    "stardist":  25,
+    "instanseg": 15,
+    "cosmx":     15,
+    "auto":      15,
+}
+
+
+def _find_prior_mask(
+    fov_str: str,
+    prior_dir: Path,
+    prior_glob: str,
+    prior_model: str = "auto",
+) -> Path | None:
+    """Find the best prior mask for a given FOV ID string.
+
+    Args:
+        prior_model: one of 'auto', 'cellpose', 'stardist', 'instanseg', 'cosmx'
+    """
+    fov_num    = str(_fov_str_to_int(fov_str))
     fov_padded = fov_str if fov_str.startswith("FOV") else f"FOV{int(fov_num):05d}"
 
     candidates = sorted(prior_dir.glob(prior_glob))
+    keywords   = _PRIOR_KEYWORDS.get(prior_model, _PRIOR_KEYWORDS["auto"])
 
-    # Prefer cpsam masks, then any nuclear mask, then CellLabels
-    for keyword in ["cpsam_nuclear", "cpsam", "nuclear_mask", "CellLabels"]:
+    for keyword in keywords:
         for c in candidates:
             if fov_padded in c.name or f"F{int(fov_num):05d}" in c.name:
                 if keyword in c.name:
                     return c
 
-    # Fallback: any mask containing the FOV ID
+    # Fallback: any file containing the FOV ID
     for c in candidates:
         if fov_padded in c.name or f"F{int(fov_num):05d}" in c.name:
             return c
@@ -106,7 +150,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--prior_dir", required=True,
-        help="Directory containing prior segmentation mask TIFs (Cellpose cpsam or CellLabels)",
+        help="Directory containing prior segmentation mask TIFs",
     )
     p.add_argument(
         "--output", required=True,
@@ -119,6 +163,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--prior_glob", default="*.tif",
         help="Glob pattern relative to prior_dir for finding masks (default: *.tif)",
+    )
+    p.add_argument(
+        "--prior_model", default="auto",
+        choices=["auto", "cellpose", "stardist", "instanseg", "cosmx"],
+        help=(
+            "Which segmentation model's mask to use as Baysor prior (default: auto).\n"
+            "  auto      — prefer cellpose, then stardist, instanseg, cosmx\n"
+            "  cellpose  — *_cpsam_nuclear_mask.tif\n"
+            "  stardist  — *_stardist_nuclear_mask.tif  (dilation auto-set to 25px)\n"
+            "  instanseg — *_instanseg_nuclear_mask.tif\n"
+            "  cosmx     — *_cosmx_nuclear_mask.tif"
+        ),
     )
     p.add_argument("--scale",             type=float, default=10.0,
                    help="Expected cell radius in micrometres (default: 10)")
@@ -163,6 +219,12 @@ def main() -> None:
     out_root  = Path(args.output)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    # If the user didn't explicitly pass --prior_dilation_px, use the model default.
+    # argparse has no built_in "was this flag given?" — compare against the hardcoded default.
+    dilation_px = args.prior_dilation_px
+    if dilation_px == 15 and args.prior_model in _PRIOR_DILATION_DEFAULTS:
+        dilation_px = _PRIOR_DILATION_DEFAULTS[args.prior_model]
+
     seg = BaysorSegmenter(
         scale_um=args.scale,
         min_molecules=args.min_molecules,
@@ -170,7 +232,7 @@ def main() -> None:
         n_clusters=args.n_clusters,
         pixel_size_um=args.pixel_size_um,
         baysor_bin=args.baysor_bin,
-        prior_dilation_px=args.prior_dilation_px,
+        prior_dilation_px=dilation_px,
         use_z=args.use_z,
         use_docker=args.use_docker,
     )
@@ -189,6 +251,7 @@ def main() -> None:
     backend  = "Docker" if args.use_docker else f"binary ({args.baysor_bin})"
     print(f"\nBaysor RNA-guided segmentation  [{backend}]  mode={run_mode}")
     print(f"  FOVs:        {fov_ids}")
+    print(f"  Prior model: {args.prior_model}  (dilation={dilation_px}px)")
     print(f"  Scale:       {args.scale} um  ({args.scale / args.pixel_size_um:.0f} px)")
     print(f"  Prior conf:  {args.prior_confidence}")
     print(f"  Min mol:     {args.min_molecules}")
@@ -229,9 +292,9 @@ def main() -> None:
             print(f"  WARNING: No tx file found for {fov_str} in {tx_dir} — skipping")
             continue
 
-        prior_mask = _find_prior_mask(fov_str, prior_dir, args.prior_glob)
+        prior_mask = _find_prior_mask(fov_str, prior_dir, args.prior_glob, args.prior_model)
         if prior_mask is None:
-            print(f"  WARNING: No prior mask found for {fov_str} in {prior_dir}")
+            print(f"  WARNING: No {args.prior_model} mask found for {fov_str} in {prior_dir}")
             print(f"  Using CosMx native CellLabels as fallback ...")
             native_glob = f"**/CellLabels_F{fov_int:05d}.tif"
             native = list(Path("raw_data").rglob(native_glob))
