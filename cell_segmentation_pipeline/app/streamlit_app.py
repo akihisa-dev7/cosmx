@@ -29,6 +29,7 @@ Use the sidebar to open a review tool:
 
 | Page | Purpose |
 |---|---|
+| **Segmentation Runner** | Input rawdata, select models & parameters, run segmentation, compare results |
 | **FOV Viewer** | Browse any FOV with zoom/pan overlay |
 | **Model Comparison** | Side-by-side comparison of segmentation models |
 | **Cell Inspector** | Inspect individual cells: crop, metadata, neighbourhood |
