@@ -55,6 +55,19 @@ segmentation:
     expand_px: 5          # best from pilot; alternatives: 0, 3, 8, 10
     min_area_px: 50       # discard masks smaller than this after expansion
 
+  # RNA-guided segmentation (requires Baysor binary)
+  baysor:
+    scale_um: 10                      # expected cell radius in micrometres
+    min_molecules: 15                 # min transcripts per cell (lower = keep glia)
+    prior_confidence: 0.5             # 0=RNA-only, 1=DAPI-only; 0.5 is balanced
+    n_clusters: 4                     # expression-type clusters (try 4-8 for brain)
+    pixel_size_um: 0.12028            # CosMx slide1 calibration
+    prior_dilation_px: 15             # px to dilate prior mask for Voronoi boundary
+    use_z: false                      # keep false — Baysor 3D polygons incomplete
+    baysor_bin: baysor                # path to baysor binary if not on PATH
+    tx_dir: outputs_ssd/proseg_pilot  # directory containing FOV*_tx.csv.gz files
+    prior_dir: outputs/pilot_4fov/masks  # directory containing Cellpose prior masks
+
 qc:
   min_cell_area_px: 50
   max_cell_area_px: 10000

@@ -116,8 +116,22 @@ def get_segmenter(model_name: str, cfg: dict) -> BaseSegmenter:
             pixel_size_um=sd_cfg.get("pixel_size_um", 0.12274),
         )
 
+    if name == "baysor":
+        from .baysor_segmenter import BaysorSegmenter
+        b_cfg = seg_cfg.get("baysor", {})
+        return BaysorSegmenter(
+            scale_um=b_cfg.get("scale_um", 10.0),
+            min_molecules=b_cfg.get("min_molecules", 15),
+            prior_confidence=b_cfg.get("prior_confidence", 0.5),
+            n_clusters=b_cfg.get("n_clusters", 4),
+            pixel_size_um=b_cfg.get("pixel_size_um", 0.12028),
+            baysor_bin=b_cfg.get("baysor_bin", "baysor"),
+            prior_dilation_px=b_cfg.get("prior_dilation_px", 15),
+            use_z=b_cfg.get("use_z", False),
+        )
+
     raise ValueError(
         f"Unknown model '{model_name}'. "
         "Valid: cellpose_cpsam, cellpose_nuclei, cellpose_cyto3, stardist, "
-        "stardist_finetuned, instanseg"
+        "stardist_finetuned, instanseg, baysor"
     )

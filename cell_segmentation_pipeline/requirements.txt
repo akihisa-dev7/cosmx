@@ -26,3 +26,9 @@ PyYAML>=6.0.0
 # UI (optional)
 streamlit>=1.35.0
 Pillow>=10.0.0
+
+# RNA-guided segmentation (Baysor)
+anndata>=0.10.0
+# sopa[baysor]>=2.0.0  # optional wrapper; may fail on some systems (flowio dep)
+#   Install separately if needed: pip install 'sopa[baysor]>=2.0.0'
+# Baysor binary: https://github.com/kharchenkolab/Baysor/releases
