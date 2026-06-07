@@ -6,9 +6,9 @@ import sys
 import time
 from pathlib import Path
 
-# pages/ -> app/ -> cell_segmentation_pipeline/ -> CosMx_2026/
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# parents[0]=pages  [1]=app  [2]=cell_segmentation_pipeline  [3]=CosMx_2026
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # project root
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # app utils
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ st.set_page_config(page_title="Segmentation Runner", layout="wide")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-SEG_SCRIPT   = Path(__file__).resolve().parents[3] / "scripts" / "run_segmentation.py"
+SEG_SCRIPT   = Path(__file__).resolve().parents[2] / "scripts" / "run_segmentation.py"
 DEFAULT_IMG  = str(PROJECT_ROOT / "raw_data" / "pilot_4fov" / "slide1_RNA" / "morphology_images")
 DEFAULT_OUT  = str(PROJECT_ROOT / "outputs" / "cell_segmentation_pipeline")
 DEFAULT_MANIFEST = str(PROJECT_ROOT / "config" / "sample_manifest.csv")
@@ -43,10 +43,12 @@ STATUS_ICON = {"waiting": "⏳", "running": "🔄", "done": "✅", "error": "❌
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
-if "seg_jobs"  not in st.session_state:
-    st.session_state["seg_jobs"]  = {}   # key="{model}_{fov}" → status str
-if "seg_procs" not in st.session_state:
-    st.session_state["seg_procs"] = {}   # key → subprocess.Popen
+if "seg_jobs"   not in st.session_state:
+    st.session_state["seg_jobs"]   = {}   # key="{model}_{fov}" → status str
+if "seg_procs"  not in st.session_state:
+    st.session_state["seg_procs"]  = {}   # key → subprocess.Popen
+if "seg_errors" not in st.session_state:
+    st.session_state["seg_errors"] = {}   # key → stderr text
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -89,7 +91,15 @@ def _poll_jobs(output_dir: str) -> None:
         if proc.poll() is not None:          # process finished
             model, fov = key.rsplit("_", 1)
             mask = _mask_path(model, fov, output_dir)
-            st.session_state["seg_jobs"][key] = "done" if (mask and mask.exists()) else "error"
+            if mask and mask.exists():
+                st.session_state["seg_jobs"][key] = "done"
+            else:
+                st.session_state["seg_jobs"][key] = "error"
+                # Read stderr from temp file if available
+                err_file = Path(output_dir) / f".err_{key}.txt"
+                if err_file.exists():
+                    st.session_state["seg_errors"][key] = err_file.read_text()[-1000:]
+                    err_file.unlink(missing_ok=True)
             del st.session_state["seg_procs"][key]
 
 
@@ -155,7 +165,14 @@ with st.sidebar:
 
     st.divider()
 
-    run_btn = st.button("▶ Run segmentation", type="primary", use_container_width=True)
+    run_btn   = st.button("▶ Run segmentation", type="primary", use_container_width=True)
+    reset_btn = st.button("🗑 Clear status",    use_container_width=True)
+
+    if reset_btn:
+        st.session_state["seg_jobs"]   = {}
+        st.session_state["seg_procs"]  = {}
+        st.session_state["seg_errors"] = {}
+        st.rerun()
 
     # Progress
     jobs = st.session_state["seg_jobs"]
@@ -170,12 +187,20 @@ with st.sidebar:
 # ── Launch jobs ───────────────────────────────────────────────────────────────
 
 if run_btn:
-    if not sel_fovs:
+    if not SEG_SCRIPT.exists():
+        st.error(f"Script not found: {SEG_SCRIPT}")
+    elif not sel_fovs:
         st.sidebar.warning("Select at least one FOV.")
     elif not sel_models:
         st.sidebar.warning("Select at least one model.")
     else:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+        # Clear previous errors for re-runs
+        for model in sel_models:
+            for fov in sel_fovs:
+                key = f"{model}_{fov}"
+                st.session_state["seg_errors"].pop(key, None)
+
         for model in sel_models:
             for fov in sel_fovs:
                 key = f"{model}_{fov}"
@@ -183,10 +208,11 @@ if run_btn:
                     model, fov, image_dir, output_dir, manifest,
                     model_params.get(model, {}),
                 )
+                err_file = Path(output_dir) / f".err_{key}.txt"
                 proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=open(err_file, "w"),
                 )
                 st.session_state["seg_jobs"][key]  = "running"
                 st.session_state["seg_procs"][key] = proc
@@ -269,7 +295,12 @@ for model_key in MODELS:          # fixed display order
         elif job_status == "running":
             st.info("Running…")
         elif job_status == "error":
-            st.error("Error — check terminal logs")
+            err_text = st.session_state["seg_errors"].get(job_key, "")
+            if err_text:
+                with st.expander("Error details"):
+                    st.code(err_text, language="bash")
+            else:
+                st.error("Failed — check logs")
         else:
             st.info("Run to generate")
 
