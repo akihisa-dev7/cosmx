@@ -30,8 +30,10 @@ results/
 .ipynb_checkpoints/
 *.ipynb
 
-# ===== Logs =====
+# ===== Logs & runtime =====
 *.log
+.logs/
+.pids/
 
 # ===== OS =====
 .DS_Store
