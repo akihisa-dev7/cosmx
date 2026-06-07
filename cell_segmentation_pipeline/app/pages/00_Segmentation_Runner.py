@@ -56,11 +56,12 @@ STATUS_ICON = {"waiting": "⏳", "running": "🔄", "done": "✅", "error": "❌
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for _k, _v in [
-    ("seg_jobs",   {}),
-    ("seg_procs",  {}),
-    ("seg_errors", {}),
-    ("seg_starts", {}),   # key → start timestamp (float)
-    ("seg_logs",   {}),   # key → last N lines of stdout
+    ("seg_jobs",       {}),
+    ("seg_procs",      {}),
+    ("seg_errors",     {}),
+    ("seg_starts",     {}),    # key → start timestamp (float)
+    ("seg_logs",       {}),    # key → last N lines of stdout
+    ("seg_is_running", False), # lock: True while any job is in progress
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -118,6 +119,10 @@ def _poll_jobs(output_dir: str) -> None:
                 st.session_state["seg_logs"][key] = "\n".join(lines[-20:])
                 out_file.unlink(missing_ok=True)
             del st.session_state["seg_procs"][key]
+
+    # Release lock when all subprocesses have finished
+    if not st.session_state["seg_procs"]:
+        st.session_state["seg_is_running"] = False
 
 
 def _build_cmd(model, fov_id, image_dir, output_dir, manifest, params) -> list[str]:
@@ -177,21 +182,46 @@ with st.sidebar:
                 model_params[model_key] = p
 
     st.divider()
-    run_btn   = st.button("▶ Run segmentation", type="primary", use_container_width=True)
-    reset_btn = st.button("🗑 Clear status",    use_container_width=True)
+
+    is_running = st.session_state["seg_is_running"]
+
+    run_btn  = st.button(
+        "▶ Run segmentation",
+        type="primary",
+        use_container_width=True,
+        disabled=is_running,       # 実行中は物理的に押せない
+    )
+    stop_btn = st.button(
+        "⏹ 停止",
+        use_container_width=True,
+        disabled=not is_running,   # 停止は実行中のみ有効
+        type="secondary",
+    )
+    reset_btn = st.button("🗑 Clear status", use_container_width=True)
+
+    if stop_btn:
+        # Kill all child processes
+        for proc in st.session_state["seg_procs"].values():
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        for k in ["seg_jobs", "seg_procs", "seg_errors", "seg_starts", "seg_logs"]:
+            st.session_state[k] = {}
+        st.session_state["seg_is_running"] = False
+        st.rerun()
+
     if reset_btn:
         for k in ["seg_jobs", "seg_procs", "seg_errors", "seg_starts", "seg_logs"]:
             st.session_state[k] = {}
+        st.session_state["seg_is_running"] = False
         st.rerun()
 
 
 # ── Launch jobs ───────────────────────────────────────────────────────────────
 
-if run_btn:
-    # Guard: don't launch if jobs are already running
-    if st.session_state["seg_procs"]:
-        st.sidebar.warning("実行中のジョブがあります。完了を待つか「🗑 Clear status」で停止してください。")
-    elif not SEG_SCRIPT.exists():
+if run_btn and not st.session_state["seg_is_running"]:
+    if not SEG_SCRIPT.exists():
         st.error(f"Script not found: {SEG_SCRIPT}")
     elif not sel_fovs:
         st.sidebar.warning("FOVを1つ以上選択してください。")
@@ -214,6 +244,7 @@ if run_btn:
                 st.session_state["seg_jobs"][key]   = "running"
                 st.session_state["seg_procs"][key]  = proc
                 st.session_state["seg_starts"][key] = time.time()
+        st.session_state["seg_is_running"] = True   # lock
         st.rerun()
 
 # Poll & auto-refresh
