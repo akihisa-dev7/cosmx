@@ -154,31 +154,36 @@ def _status_badge(status: str) -> str:
 
 with st.sidebar:
     st.header("Input")
-    image_dir  = st.text_input("Raw image directory", value=DEFAULT_IMG)
-    output_dir = st.text_input("Output directory",    value=DEFAULT_OUT)
-    manifest   = st.text_input("Manifest CSV",        value=DEFAULT_MANIFEST)
+    is_running = st.session_state["seg_is_running"]
+
+    if is_running:
+        st.info("実行中のため設定は変更できません")
+
+    image_dir  = st.text_input("Raw image directory", value=DEFAULT_IMG,      disabled=is_running)
+    output_dir = st.text_input("Output directory",    value=DEFAULT_OUT,      disabled=is_running)
+    manifest   = st.text_input("Manifest CSV",        value=DEFAULT_MANIFEST, disabled=is_running)
 
     st.divider()
     st.subheader("FOV")
     discovered = _discover_fovs(image_dir)
-    sel_fovs   = st.multiselect("FOVs to process", discovered, default=discovered[:1])
+    sel_fovs   = st.multiselect("FOVs to process", discovered, default=discovered[:1], disabled=is_running)
 
     st.divider()
     st.subheader("Models & parameters")
     model_params: dict[str, dict] = {}
     sel_models:   list[str]       = []
     for model_key, model_label in MODELS.items():
-        enabled = st.checkbox(model_label, value=(model_key == "cellpose_cpsam"))
+        enabled = st.checkbox(model_label, value=(model_key == "cellpose_cpsam"), disabled=is_running)
         if enabled:
             sel_models.append(model_key)
             with st.expander(f"{model_label} parameters"):
                 p: dict = {}
                 if model_key.startswith("cellpose"):
-                    p["diameter"]           = st.number_input("diameter",           value=25.0, step=1.0,  key=f"{model_key}_d")
-                    p["cellprob_threshold"] = st.number_input("cellprob_threshold", value=-1.0, step=0.1,  key=f"{model_key}_cp")
-                    p["flow_threshold"]     = st.number_input("flow_threshold",     value=0.6,  step=0.05, key=f"{model_key}_ft")
-                p["expand_px"]   = st.number_input("expand_px",   value=5,  step=1, key=f"{model_key}_ep")
-                p["min_area_px"] = st.number_input("min_area_px", value=50, step=5, key=f"{model_key}_ma")
+                    p["diameter"]           = st.number_input("diameter",           value=25.0, step=1.0,  key=f"{model_key}_d",  disabled=is_running)
+                    p["cellprob_threshold"] = st.number_input("cellprob_threshold", value=-1.0, step=0.1,  key=f"{model_key}_cp", disabled=is_running)
+                    p["flow_threshold"]     = st.number_input("flow_threshold",     value=0.6,  step=0.05, key=f"{model_key}_ft", disabled=is_running)
+                p["expand_px"]   = st.number_input("expand_px",   value=5,  step=1, key=f"{model_key}_ep", disabled=is_running)
+                p["min_area_px"] = st.number_input("min_area_px", value=50, step=5, key=f"{model_key}_ma", disabled=is_running)
                 model_params[model_key] = p
 
     st.divider()
