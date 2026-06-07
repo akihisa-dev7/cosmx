@@ -1,0 +1,30 @@
+# ── CosMx segmentation container dependencies ────────────────────────────────
+# NOTE: torch/torchvision already in base image (pytorch/pytorch:2.3.1-cuda12.1)
+
+# Core image processing
+tifffile>=2024.0.0
+imagecodecs>=2024.0.0
+scikit-image>=0.22.0
+scipy>=1.12.0
+
+# Segmentation models
+cellpose>=3.0.0
+stardist>=0.8.5
+# instanseg-torch  # optional; GPU recommended
+
+# Data & numerics
+numpy>=1.26.0
+pandas>=2.1.0
+anndata>=0.10.0
+
+# Visualisation & QC
+matplotlib>=3.8.0
+seaborn>=0.13.0
+plotly>=5.20.0
+
+# Config & IO
+PyYAML>=6.0.0
+openpyxl>=3.1.0
+
+# PDF generation (implementation docs)
+fpdf2>=2.7.0

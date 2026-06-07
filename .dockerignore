@@ -1,0 +1,43 @@
+# ── Docker build context exclusions ──────────────────────────────────────────
+
+# Virtual environments
+.venv/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Large data (mounted as volumes at runtime)
+outputs/
+outputs_ssd/
+raw_data/
+results/
+
+# Large binary files
+**/*.h5ad
+**/*.tif
+**/*.tiff
+**/*.csv.gz
+**/*.zip
+**/*.tar.gz
+
+# Development artifacts
+**/.ipynb_checkpoints/
+**/*.egg-info/
+**/dist/
+**/build/
+**/.pytest_cache/
+
+# IDE and OS
+.idea/
+.vscode/
+**/.DS_Store
+
+# Secrets and config
+.env
+.claude/
+
+# Git
+.git/
+.gitignore

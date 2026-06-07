@@ -1,0 +1,76 @@
+# ── CosMx 2026 — Docker Compose (production) ─────────────────────────────────
+#
+# Services:
+#   segmentation  — GPU-accelerated Cellpose/StarDist segmentation (PyTorch)
+#   baysor        — Bayesian RNA-guided segmentation (Julia binary)
+#   analysis      — Scanpy / AnnData downstream analysis (Python 3.12)
+#   gui           — Streamlit web UI (Python 3.11)
+#
+# Baysor 3-stage workflow:
+#   1. segmentation container runs: python .../run_baysor.py --mode prepare ...
+#   2. baysor container runs:       baysor run -c config.toml -o out/ tx.csv prior.tif
+#   3. segmentation container runs: python .../run_baysor.py --mode postprocess ...
+#
+# Usage:
+#   docker compose up gui                      # start GUI only
+#   docker compose run --rm segmentation \
+#     python cell_segmentation_pipeline/scripts/run_cellpose.py ...
+#   docker compose run --rm baysor \
+#     /usr/local/bin/baysor run -c /workspace/outputs/baysor/FOV00001/baysor_config.toml \
+#       -o /workspace/outputs/baysor/FOV00001/ \
+#       /workspace/outputs/baysor/FOV00001/transcripts_for_baysor.csv \
+#       /workspace/outputs/pilot_4fov/masks/FOV00001_cpsam_nuclear_mask.tif
+
+version: "3.9"
+
+x-common-volumes: &common-volumes
+  - ${OUTPUTS_DIR:-./outputs}:/workspace/outputs
+  - ${OUTPUTS_SSD_DIR:-./outputs_ssd}:/workspace/outputs_ssd
+  - ${RAW_DATA_DIR:-./raw_data}:/workspace/raw_data
+  - ${RESULTS_DIR:-./results}:/workspace/results
+
+services:
+  # ── Segmentation (GPU) ───────────────────────────────────────────────────────
+  segmentation:
+    build:
+      context: .
+      dockerfile: docker/segmentation/Dockerfile
+    image: cosmx2026/segmentation:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes: *common-volumes
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # ── Baysor (Julia RNA-guided segmentation) ───────────────────────────────────
+  baysor:
+    image: vpetukhov/baysor:v0.7.1
+    volumes: *common-volumes
+    working_dir: /workspace
+
+  # ── Analysis (Scanpy / AnnData) ──────────────────────────────────────────────
+  analysis:
+    build:
+      context: .
+      dockerfile: docker/analysis/Dockerfile
+    image: cosmx2026/analysis:latest
+    volumes: *common-volumes
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # ── GUI (Streamlit) ──────────────────────────────────────────────────────────
+  gui:
+    build:
+      context: .
+      dockerfile: docker/gui/Dockerfile
+    image: cosmx2026/gui:latest
+    ports:
+      - "${GUI_PORT:-8501}:8501"
+    volumes: *common-volumes
+    working_dir: /workspace
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true

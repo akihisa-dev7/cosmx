@@ -171,6 +171,94 @@ class BaysorSegmenter(BaseSegmenter):
 
         return mask_path
 
+    # ── Docker Compose 3-stage helpers ────────────────────────────────────────
+
+    def prepare_fov(
+        self,
+        tx_csv: Path,
+        prior_mask: Optional[Path],
+        out_dir: Path,
+        fov_col: str = "fov",
+        fov_id: Optional[int] = None,
+    ) -> None:
+        """Stage 1: write transcripts CSV + TOML config; print baysor docker command.
+
+        Run this inside the *segmentation* container.  After it completes, run
+        the printed command inside the *baysor* container, then call postprocess_fov().
+        """
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"  [prepare] Loading transcripts from {tx_csv.name} ...")
+        tx_df = self._load_and_prep_transcripts(tx_csv, fov_col, fov_id)
+        if len(tx_df) == 0:
+            raise ValueError(f"No valid transcripts for fov_id={fov_id}")
+        print(f"  [prepare] {len(tx_df):,} transcripts, {tx_df['gene'].nunique()} genes")
+
+        baysor_csv = out_dir / "transcripts_for_baysor.csv"
+        tx_df.to_csv(baysor_csv, index=False)
+
+        toml_path = self._write_config(out_dir)
+
+        if prior_mask and prior_mask.exists():
+            import shutil
+            prior_copy = out_dir / "prior_mask.tif"
+            if not prior_copy.exists():
+                shutil.copy2(prior_mask, prior_copy)
+            prior_arg = "/workspace/" + str(prior_copy.relative_to(Path("/workspace")))
+        else:
+            prior_arg = None
+
+        ws_out    = "/workspace/" + str(out_dir.resolve().relative_to(Path("/workspace")))
+        ws_tx     = ws_out + "/transcripts_for_baysor.csv"
+        ws_toml   = ws_out + "/baysor_config.toml"
+        ws_prior  = ws_out + "/prior_mask.tif" if prior_arg else ""
+
+        cmd_parts = [
+            "docker compose run --rm baysor",
+            f"/usr/local/bin/baysor run",
+            f"-c {ws_toml}",
+            f"-o {ws_out}/",
+            ws_tx,
+        ]
+        if ws_prior:
+            cmd_parts.append(ws_prior)
+
+        print(f"\n  [prepare] Files written to: {out_dir}")
+        print(f"  [prepare] Next — run in baysor container:")
+        print(f"\n    {' '.join(cmd_parts)}\n")
+
+    def postprocess_fov(
+        self,
+        out_dir: Path,
+        prior_mask: Optional[Path] = None,
+        image_shape: tuple[int, int] = (4256, 4256),
+        fov_id: Optional[int] = None,
+    ) -> Path:
+        """Stage 3: read Baysor output, build label mask + AnnData.
+
+        Run this inside the *segmentation* container after Baysor has finished.
+        Returns path to baysor_mask.tif.
+        """
+        out_dir = Path(out_dir)
+
+        seg_df, stats_df = self._read_baysor_output(out_dir)
+        n_cells = len(stats_df) if stats_df is not None else 0
+        print(f"  [postprocess] {n_cells} cells from Baysor output")
+
+        prior_path = prior_mask or (out_dir / "prior_mask.tif")
+        mask = self._build_label_mask(stats_df, prior_path, image_shape)
+        mask_path = out_dir / "baysor_mask.tif"
+        tifffile.imwrite(str(mask_path), mask)
+        print(f"  [postprocess] Mask saved -> {mask_path}")
+
+        if seg_df is not None and stats_df is not None:
+            adata = self._build_anndata(seg_df, stats_df, fov_id)
+            adata.write_h5ad(str(out_dir / "anndata.h5ad"))
+            print(f"  [postprocess] AnnData saved ({adata.n_obs} cells, {adata.n_vars} genes)")
+
+        return mask_path
+
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _check_baysor_binary(self) -> None:

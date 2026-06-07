@@ -140,6 +140,16 @@ def parse_args() -> argparse.Namespace:
                    help="Run Baysor via Docker (vpetukhov/baysor:latest) instead of local binary")
     p.add_argument("--dry_run",           action="store_true",
                    help="Validate setup (find files, check binary) without running Baysor")
+    p.add_argument(
+        "--mode", default="all",
+        choices=["all", "prepare", "postprocess"],
+        help=(
+            "Execution mode for Docker Compose 3-stage workflow:\n"
+            "  all         — full pipeline (prepare + baysor + postprocess) in one call\n"
+            "  prepare     — write transcripts CSV + TOML config, then print baysor command\n"
+            "  postprocess — read Baysor output, build label mask + AnnData h5ad"
+        ),
+    )
     return p.parse_args()
 
 
@@ -175,8 +185,9 @@ def main() -> None:
             print(f"ERROR: No FOV tx files found in {tx_dir}", file=sys.stderr)
             sys.exit(1)
 
-    mode = "Docker" if args.use_docker else f"binary ({args.baysor_bin})"
-    print(f"\nBaysor RNA-guided segmentation  [{mode}]")
+    run_mode = args.mode  # "all", "prepare", or "postprocess"
+    backend  = "Docker" if args.use_docker else f"binary ({args.baysor_bin})"
+    print(f"\nBaysor RNA-guided segmentation  [{backend}]  mode={run_mode}")
     print(f"  FOVs:        {fov_ids}")
     print(f"  Scale:       {args.scale} um  ({args.scale / args.pixel_size_um:.0f} px)")
     print(f"  Prior conf:  {args.prior_confidence}")
@@ -190,18 +201,39 @@ def main() -> None:
         print(f"{'='*60}")
         print(f"  FOV: {fov_str}")
 
-        # Find transcript file
+        fov_out = out_root / fov_str
+        fov_int = _fov_str_to_int(fov_str)
+
+        # ── postprocess mode: no tx_file/prior_mask needed ────────────────────
+        if run_mode == "postprocess":
+            try:
+                mask_path = seg.postprocess_fov(
+                    out_dir=fov_out,
+                    fov_id=fov_int,
+                )
+                import tifffile, numpy as np
+                mask = tifffile.imread(str(mask_path))
+                n_cells = int(mask.max())
+                results.append({"fov": fov_str, "status": "OK", "n_cells": n_cells,
+                                 "mask": str(mask_path)})
+                print(f"  DONE  n_cells={n_cells}  mask={mask_path.name}")
+            except Exception as e:
+                print(f"  ERROR in {fov_str}: {e}", file=sys.stderr)
+                traceback.print_exc()
+                results.append({"fov": fov_str, "status": "ERROR", "n_cells": 0, "error": str(e)})
+            continue
+
+        # ── prepare / all: need tx_file and prior_mask ─────────────────────────
         tx_file = _find_tx_file(fov_str, tx_dir)
         if tx_file is None:
             print(f"  WARNING: No tx file found for {fov_str} in {tx_dir} — skipping")
             continue
 
-        # Find prior mask
         prior_mask = _find_prior_mask(fov_str, prior_dir, args.prior_glob)
         if prior_mask is None:
             print(f"  WARNING: No prior mask found for {fov_str} in {prior_dir}")
             print(f"  Using CosMx native CellLabels as fallback ...")
-            native_glob = f"**/CellLabels_F{_fov_str_to_int(fov_str):05d}.tif"
+            native_glob = f"**/CellLabels_F{fov_int:05d}.tif"
             native = list(Path("raw_data").rglob(native_glob))
             prior_mask = native[0] if native else None
 
@@ -210,9 +242,6 @@ def main() -> None:
         else:
             print(f"  WARNING: No prior mask at all — Baysor will run without prior")
 
-        fov_out = out_root / fov_str
-        fov_int = _fov_str_to_int(fov_str)
-
         if args.dry_run:
             print(f"  DRY RUN — tx={tx_file.name}, prior={prior_mask.name if prior_mask else 'NONE'}")
             results.append({"fov": fov_str, "status": "DRY_RUN", "n_cells": 0,
@@ -220,25 +249,31 @@ def main() -> None:
             continue
 
         try:
-            mask_path = seg.run_fov(
-                tx_csv=tx_file,
-                prior_mask=prior_mask,
-                out_dir=fov_out,
-                fov_col="fov",
-                fov_id=fov_int,
-            )
-
-            # Quick QC: count cells in output mask
-            import tifffile, numpy as np
-            mask = tifffile.imread(str(mask_path))
-            n_cells = int(mask.max())
-            results.append({
-                "fov": fov_str,
-                "status": "OK",
-                "n_cells": n_cells,
-                "mask": str(mask_path),
-            })
-            print(f"  DONE  n_cells={n_cells}  mask={mask_path.name}")
+            if run_mode == "prepare":
+                seg.prepare_fov(
+                    tx_csv=tx_file,
+                    prior_mask=prior_mask,
+                    out_dir=fov_out,
+                    fov_col="fov",
+                    fov_id=fov_int,
+                )
+                results.append({"fov": fov_str, "status": "PREPARED", "n_cells": 0,
+                                 "out_dir": str(fov_out)})
+            else:
+                # mode == "all"
+                mask_path = seg.run_fov(
+                    tx_csv=tx_file,
+                    prior_mask=prior_mask,
+                    out_dir=fov_out,
+                    fov_col="fov",
+                    fov_id=fov_int,
+                )
+                import tifffile, numpy as np
+                mask = tifffile.imread(str(mask_path))
+                n_cells = int(mask.max())
+                results.append({"fov": fov_str, "status": "OK", "n_cells": n_cells,
+                                 "mask": str(mask_path)})
+                print(f"  DONE  n_cells={n_cells}  mask={mask_path.name}")
 
         except Exception as e:
             print(f"  ERROR in {fov_str}: {e}", file=sys.stderr)

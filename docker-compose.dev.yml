@@ -1,0 +1,29 @@
+# ── CosMx 2026 — Docker Compose override (development) ───────────────────────
+#
+# Mounts source code as volumes so edits take effect without rebuilding.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up gui
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm segmentation bash
+
+version: "3.9"
+
+services:
+  segmentation:
+    volumes:
+      - ./cell_segmentation_pipeline:/workspace/cell_segmentation_pipeline
+      - ./config:/workspace/config
+      - ./finetune:/workspace/finetune
+
+  analysis:
+    volumes:
+      - ./cosmx_molecular_analysis:/workspace/cosmx_molecular_analysis
+      - ./config:/workspace/config
+
+  gui:
+    volumes:
+      - ./annotation_tools:/workspace/annotation_tools
+      - ./config:/workspace/config
+    # Hot-reload: Streamlit watches file changes automatically
+    environment:
+      - STREAMLIT_SERVER_RUN_ON_SAVE=true
