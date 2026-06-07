@@ -35,6 +35,7 @@ Use the sidebar to open a review tool:
 | **QC Dashboard** | Population-level statistics and histograms |
 | **Random Cell Review** | Manual QC labelling — Good / Over-seg / Under-seg / Merged |
 | **Cell Type Validation** | RNA/Protein cell type color map, marker expression, manual review |
+| **RNA-Guided Segmentation** | Run Baysor on Cellpose/StarDist/InstanSeg priors; compare DAPI-only vs RNA-guided |
 
 ---
 
