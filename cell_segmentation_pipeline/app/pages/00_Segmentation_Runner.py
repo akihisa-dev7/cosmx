@@ -188,7 +188,10 @@ with st.sidebar:
 # ── Launch jobs ───────────────────────────────────────────────────────────────
 
 if run_btn:
-    if not SEG_SCRIPT.exists():
+    # Guard: don't launch if jobs are already running
+    if st.session_state["seg_procs"]:
+        st.sidebar.warning("実行中のジョブがあります。完了を待つか「🗑 Clear status」で停止してください。")
+    elif not SEG_SCRIPT.exists():
         st.error(f"Script not found: {SEG_SCRIPT}")
     elif not sel_fovs:
         st.sidebar.warning("FOVを1つ以上選択してください。")
