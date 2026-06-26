@@ -20,6 +20,7 @@ Usage:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import warnings
@@ -44,15 +45,18 @@ x = "x"
 y = "y"
 {z_line}
 gene = "gene"
-min_molecules_per_gene = 0
 
 [segmentation]
 scale = {scale:.1f}
 scale_std = "50%"
-min_molecules_per_cell = {min_molecules}
 n_clusters = {n_clusters}
-force_2d = {force_2d}
 prior_segmentation_confidence = {prior_confidence:.2f}
+{n_cells_init_line}
+
+[plotting]
+# k=5 avoids BoundsError in gene_composition_colors (Baysor v0.7.1 bug where
+# virtual centroid molecules are added to bm_data.x but not to the genes array)
+gene_composition_neigborhood = 5
 """
 
 
@@ -84,6 +88,9 @@ class BaysorSegmenter(BaseSegmenter):
         prior_dilation_px: int = 15,
         use_z: bool = False,
         use_docker: bool = False,
+        z_planes: "list[int] | None" = None,
+        n_cells_init: int = 500,
+        max_transcripts: int = 500_000,
     ) -> None:
         self.scale_um = scale_um
         self.min_molecules = min_molecules
@@ -94,6 +101,9 @@ class BaysorSegmenter(BaseSegmenter):
         self.prior_dilation_px = prior_dilation_px
         self.use_z = use_z
         self.use_docker = use_docker
+        self.z_planes = z_planes  # e.g. [1,2,3] to filter transcript z-planes
+        self.n_cells_init = n_cells_init  # cap initial EM components; 0=auto (can OOM)
+        self.max_transcripts = max_transcripts  # subsample to this count to avoid Julia GC crashes
 
     @property
     def name(self) -> str:
@@ -136,21 +146,37 @@ class BaysorSegmenter(BaseSegmenter):
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Prepare transcript CSV
-        print(f"  [baysor] Loading transcripts from {tx_csv.name} ...")
-        tx_df = self._load_and_prep_transcripts(tx_csv, fov_col, fov_id)
-        if len(tx_df) == 0:
-            raise ValueError(f"No valid transcripts found for fov_id={fov_id}")
-        print(f"  [baysor] {len(tx_df):,} transcripts, {tx_df['gene'].nunique()} genes")
+        has_prior = prior_mask is not None and Path(prior_mask).exists()
 
+        # 1. Prepare transcript CSV (skip if already prepared, but regenerate if too large)
         baysor_csv = out_dir / "transcripts_for_baysor.csv"
-        tx_df.to_csv(baysor_csv, index=False)
+        if baysor_csv.exists():
+            cached_size = baysor_csv.stat().st_size
+            # Regenerate when cached CSV is larger than the current max_transcripts limit.
+            # Use 40 bytes/row as a generous upper bound so that a 500k-row CSV (≈8 MB)
+            # is not re-used when max_transcripts was reduced from 1.5M.
+            # When max_transcripts=0 (unlimited) we never regenerate.
+            size_limit = self.max_transcripts * 40 if self.max_transcripts > 0 else 0
+            if size_limit and cached_size > size_limit:
+                print(f"  [baysor] Cached CSV too large ({cached_size // 1_000_000} MB > "
+                      f"{size_limit // 1_000_000} MB limit), regenerating...")
+                baysor_csv.unlink()
+            else:
+                print(f"  [baysor] Reusing existing transcript CSV: {baysor_csv.name} "
+                      f"({cached_size // 1_000_000} MB)")
+        if not baysor_csv.exists():
+            print(f"  [baysor] Loading transcripts from {tx_csv.name} ...")
+            tx_df = self._load_and_prep_transcripts(tx_csv, fov_col, fov_id)
+            if len(tx_df) == 0:
+                raise ValueError(f"No valid transcripts found for fov_id={fov_id}")
+            print(f"  [baysor] {len(tx_df):,} transcripts, {tx_df['gene'].nunique()} genes")
+            tx_df.to_csv(baysor_csv, index=False)
 
         # 2. Write TOML config
         toml_path = self._write_config(out_dir)
 
-        # 3. Run Baysor
-        self._run_baysor(baysor_csv, prior_mask, out_dir, toml_path)
+        # 3. Run Baysor (TIFF prior: Baysor reads the mask file directly)
+        self._run_baysor(baysor_csv, prior_mask if has_prior else None, out_dir, toml_path)
 
         # 4. Parse outputs
         seg_df, stats_df = self._read_baysor_output(out_dir)
@@ -261,6 +287,29 @@ class BaysorSegmenter(BaseSegmenter):
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
+    def _embed_prior_labels(
+        self, df: pd.DataFrame, prior_mask_path: Path, image_shape: tuple
+    ) -> pd.DataFrame:
+        """Add prior_segmentation column by mapping (x, y) → DAPI cell label.
+
+        Baysor v0.7.1 with a TIFF prior augments bm_data.x with one virtual
+        centroid molecule per prior cell (e.g. 776 extra rows).  The gene
+        encoding vector is NOT extended, so the k-NN in gene_composition_colors
+        returns indices up to N_real+N_virtual and genes[idx] crashes for
+        idx > N_real.  Passing the prior as a CSV column (':prior_segmentation')
+        avoids the TIFF code path and keeps the k-NN on the real molecule set only.
+        """
+        H, W = image_shape
+        prior = tifffile.imread(str(prior_mask_path))
+        if prior.shape != (H, W):
+            from skimage.transform import resize
+            prior = (resize(prior, (H, W), order=0, preserve_range=True)).astype(np.int32)
+        x_idx = df["x"].clip(0, W - 1).astype(int)
+        y_idx = df["y"].clip(0, H - 1).astype(int)
+        df = df.copy()
+        df["prior_segmentation"] = prior[y_idx.values, x_idx.values]
+        return df
+
     def _check_baysor_binary(self) -> None:
         if self.use_docker:
             result = subprocess.run(
@@ -298,11 +347,26 @@ class BaysorSegmenter(BaseSegmenter):
     def _load_and_prep_transcripts(
         self, tx_csv: Path, fov_col: str, fov_id: Optional[int]
     ) -> pd.DataFrame:
-        df = pd.read_csv(tx_csv, low_memory=False)
+        # Detect which coordinate / gene columns exist without loading the full file.
+        _peek = pd.read_csv(tx_csv, nrows=1, low_memory=False)
+        _all_cols = list(_peek.columns)
 
-        # Filter by FOV
-        if fov_id is not None and fov_col in df.columns:
-            df = df[df[fov_col] == fov_id].copy()
+        # Only load the columns we actually need so peak memory stays low after
+        # Cellpose/PyTorch has already consumed several GB of RAM.
+        _coord_x = next((c for c in ["x_local_px", "x_global_px", "x"] if c in _all_cols), None)
+        _coord_y = next((c for c in ["y_local_px", "y_global_px", "y"] if c in _all_cols), None)
+        _gene_c  = next((c for c in ["target", "gene"] if c in _all_cols), None)
+        _use_cols = [c for c in [fov_col, _coord_x, _coord_y, _gene_c, "z"] if c and c in _all_cols]
+
+        # Read in chunks to avoid a single large contiguous allocation that
+        # causes SIGSEGV in the Python process when PyTorch is also resident.
+        chunks = []
+        for _chunk in pd.read_csv(tx_csv, usecols=_use_cols, chunksize=1_000_000, low_memory=False):
+            if fov_id is not None and fov_col in _chunk.columns:
+                _chunk = _chunk[_chunk[fov_col] == fov_id]
+            if len(_chunk):
+                chunks.append(_chunk)
+        df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=_use_cols)
 
         # Rename columns to Baysor standard
         col_map: dict[str, str] = {}
@@ -315,31 +379,53 @@ class BaysorSegmenter(BaseSegmenter):
                 col_map[src] = dst
         df = df.rename(columns=col_map)
 
-        # Keep z if available
+        # Keep z in output CSV only when use_z=True (avoids Baysor auto-detecting z
+        # and switching to 3D mode; z_planes filtering is selection-only)
         keep = ["x", "y", "gene"]
         if self.use_z and "z" in df.columns:
             keep.append("z")
 
         df = df[[c for c in keep if c in df.columns]].copy()
 
-        # Filter noise transcripts (z = -1)
+        # Filter noise transcripts (z = -1) and optional z-plane selection
         if "z" in df.columns:
             df = df[df["z"] >= 0]
+            if self.z_planes is not None:
+                df = df[df["z"].isin(self.z_planes)]
 
-        return df.dropna(subset=["x", "y", "gene"])
+        df = df.dropna(subset=["x", "y", "gene"])
+
+        # Clip x/y coordinates to ≥1.  Baysor warns about coords < 1 and patches
+        # them to 0; this "Minimum coordinates < 1" code path appears to trigger
+        # the Julia 1.10 GC finalizer segfault in the EM clustering step.
+        df["x"] = df["x"].clip(lower=1)
+        df["y"] = df["y"].clip(lower=1)
+
+        # Spatially-stratified subsampling to avoid Julia GC segfaults on large datasets.
+        # With 62GB RAM the crash is a Julia 1.10 GC bug during EM clustering, not OOM.
+        # Subsampling to ≤1.5M keeps ~40 tx/cell on average (well above min_molecules=15).
+        if self.max_transcripts > 0 and len(df) > self.max_transcripts:
+            n_orig = len(df)
+            rng = np.random.default_rng(42)
+            idx = rng.choice(n_orig, size=self.max_transcripts, replace=False)
+            idx.sort()
+            df = df.iloc[idx].reset_index(drop=True)
+            print(f"  [baysor] Subsampled {n_orig:,} → {len(df):,} transcripts "
+                  f"(factor {n_orig / len(df):.1f}x, max_transcripts={self.max_transcripts:,})")
+
+        return df
 
     def _write_config(self, out_dir: Path) -> Path:
         scale_px = self.scale_um / self.pixel_size_um
-        z_line = 'z = "z"' if self.use_z else "# z column disabled (force_2d = true)"
-        force_2d = "false" if self.use_z else "true"
+        z_line = 'z = "z"' if self.use_z else "# z not used — Baysor infers 2D from missing z column"
+        n_cells_init_line = f"n_cells_init = {self.n_cells_init}" if self.n_cells_init > 0 else ""
 
         toml = _TOML_TEMPLATE.format(
             z_line=z_line,
             scale=scale_px,
-            min_molecules=self.min_molecules,
             n_clusters=self.n_clusters,
-            force_2d=force_2d,
             prior_confidence=self.prior_confidence,
+            n_cells_init_line=n_cells_init_line,
         )
         toml_path = out_dir / "baysor_config.toml"
         toml_path.write_text(toml)
@@ -348,7 +434,7 @@ class BaysorSegmenter(BaseSegmenter):
     def _run_baysor(
         self,
         tx_csv: Path,
-        prior_mask: Path,
+        prior_mask: "Path | None",
         out_dir: Path,
         toml_path: Path,
     ) -> None:
@@ -365,14 +451,60 @@ class BaysorSegmenter(BaseSegmenter):
         cmd = [
             self.baysor_bin, "run",
             "--config", str(toml_path),
+            "--min-molecules-per-cell", str(self.min_molecules),
             "-o", str(out_dir) + "/",
             str(tx_csv),
         ]
         if prior_mask:
             cmd.append(str(prior_mask))
-        print(f"  [baysor] Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=False, text=True)
-        if result.returncode != 0:
+        env = os.environ.copy()
+        # Force single-threaded Julia to prevent race conditions in GC finalizers.
+        env["JULIA_NUM_THREADS"] = "1"
+        env["JULIA_NUM_GC_THREADS"] = "1"
+        # Set allocation-triggered GC intervals to Int64-max so the GC only fires
+        # when memory is truly exhausted.  This suppresses the Julia 1.10
+        # run_finalizer / gc_mark_objarray segfault on ALLOCATION-triggered GC.
+        # NOTE: the crash can still occur at Julia safepoints or explicit GC.gc()
+        # calls inside library code — those are not controlled by these env vars.
+        # We therefore retry up to _MAX_GC_RETRIES times when the process exits
+        # with -11 (SIGSEGV), which is a random crash whose probability decreases
+        # with each independent attempt.
+        env["JULIA_GC_ALLOC_POOL"] = "9223372036854775807"
+        env["JULIA_GC_ALLOC_OTHER"] = "9223372036854775807"
+        env["JULIA_GC_ALLOC_BIGOBJ"] = "9223372036854775807"
+
+        # Delete stale Baysor state files before every run.  If a previous run
+        # wrote segmentation_params.dump.toml (written at Baysor startup) and
+        # then another run starts in the same directory with different params
+        # (e.g. different n_cells_init from a different prior mask), Baysor may
+        # read/use the stale file and crash with exit code 1 during second-phase
+        # EM initialization ("Using 2D coordinates" as the last log entry).
+        for _stale in (out_dir / "segmentation_log.log",
+                       out_dir / "segmentation_params.dump.toml"):
+            if _stale.exists():
+                _stale.unlink()
+
+        _MAX_GC_RETRIES = 3
+        for _attempt in range(1, _MAX_GC_RETRIES + 1):
+            print(f"  [baysor] Running (attempt {_attempt}/{_MAX_GC_RETRIES}): {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=False, text=True, env=env)
+            if result.returncode == 0:
+                return
+            # Julia 1.10 GC bug manifests as two crash patterns — both retryable:
+            #   -11 (SIGSEGV): direct segfault in run_finalizer/gc_mark_objarray
+            #    1  (AssertionError): GC corruption produces garbage values that
+            #       trigger assertions such as "Too large component id: 274877906944"
+            #       in bmm_algorithm.jl during second-phase EM initialization.
+            _is_gc_crash = result.returncode in (-11, 1)
+            if _is_gc_crash and _attempt < _MAX_GC_RETRIES:
+                _reason = "Julia GC crash (exit -11)" if result.returncode == -11 else "Julia GC corruption (exit 1)"
+                print(f"  [baysor] {_reason} on attempt {_attempt}, retrying…")
+                # Remove partial output files so Baysor starts clean on retry
+                for _stale in (out_dir / "segmentation_log.log",
+                               out_dir / "segmentation_params.dump.toml"):
+                    if _stale.exists():
+                        _stale.unlink()
+                continue
             raise RuntimeError(f"Baysor exited with code {result.returncode}.")
 
     def _run_baysor_docker(self, tx_csv, prior_mask, out_dir, toml_path) -> None:
@@ -428,12 +560,16 @@ class BaysorSegmenter(BaseSegmenter):
         """
         H, W = image_shape
 
-        # Load prior mask for background constraint
-        prior = tifffile.imread(str(prior_path)).astype(np.uint32)
-        if prior.shape != (H, W):
-            # Resize if needed (shouldn't happen with aligned data)
-            from skimage.transform import resize
-            prior = (resize(prior, (H, W), order=0, preserve_range=True)).astype(np.uint32)
+        # Load prior mask for background constraint (None → full-image tissue mask)
+        if prior_path is not None and Path(prior_path).exists():
+            prior = tifffile.imread(str(prior_path)).astype(np.uint32)
+            if prior.shape != (H, W):
+                from skimage.transform import resize
+                prior = (resize(prior, (H, W), order=0, preserve_range=True)).astype(np.uint32)
+        else:
+            if prior_path is not None:
+                warnings.warn(f"Prior mask not found at {prior_path} — no background constraint applied")
+            prior = np.ones((H, W), dtype=np.uint32)
 
         if stats_df is None or len(stats_df) == 0:
             warnings.warn("No cells in Baysor output — returning empty mask")

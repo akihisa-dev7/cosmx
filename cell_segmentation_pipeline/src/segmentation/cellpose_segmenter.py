@@ -38,8 +38,9 @@ class CellposeSegmenter(BaseSegmenter):
         self._model = None
 
     def _load_model(self) -> None:
+        import torch
         from cellpose.models import CellposeModel
-        self._model = CellposeModel(pretrained_model=self._model_name, gpu=False)
+        self._model = CellposeModel(pretrained_model=self._model_name, gpu=torch.cuda.is_available())
 
     @property
     def name(self) -> str:

@@ -7,8 +7,18 @@ imagecodecs>=2024.0.0    # required for LZW-compressed CosMx TIFFs
 scikit-image>=0.22.0
 scipy>=1.12.0
 
+# PyTorch — pin to cu121 build; GTX 1070 driver supports CUDA 12.2 (≥ cu121, < cu130)
+# Install separately BEFORE requirements.txt:
+#   pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+
+# TensorFlow (CPU) — required by StarDist / csbdeep.
+# Pin <2.16 to stay on Keras 2 (csbdeep 0.8.x not yet compatible with Keras 3).
+tensorflow-cpu>=2.13,<2.16
+
 # Segmentation models
-cellpose>=3.0.0
+cellpose>=3.0.0,<5.0.0
 stardist>=0.8.5
 # instanseg-torch  # optional; install separately if needed
 
@@ -26,6 +36,7 @@ PyYAML>=6.0.0
 # UI (optional)
 streamlit>=1.35.0
 Pillow>=10.0.0
+streamlit-drawable-canvas>=0.9.3   # annotation canvas for 01_Annotate.py
 
 # RNA-guided segmentation (Baysor)
 anndata>=0.10.0

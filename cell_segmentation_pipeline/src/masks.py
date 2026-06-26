@@ -44,7 +44,12 @@ def expand_mask(mask: np.ndarray, expand_px: int = 5, min_area_px: int = 50) -> 
             if area < min_area_px
         )
         if small:
-            rm = np.isin(expanded, list(small))
+            # Use lookup table instead of np.isin to avoid a NumPy off-by-one
+            # bug in in1d that triggers on large arrays with many test elements.
+            lookup = np.zeros(int(expanded.max()) + 1, dtype=bool)
+            for lbl in small:
+                lookup[lbl] = True
+            rm = lookup[expanded]
             expanded = expanded.copy()
             expanded[rm] = 0
 

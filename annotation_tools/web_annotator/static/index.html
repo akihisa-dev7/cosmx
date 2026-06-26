@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>CosMx Web Annotator</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: monospace;
+  background: #111;
+  color: #ddd;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#sidebar {
+  width: 210px;
+  min-width: 210px;
+  background: #1a1a2e;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  border-right: 1px solid #333;
+}
+
+.sec { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #2a2a3e; padding-bottom: 3px; margin-bottom: 4px; }
+
+select, input[type=number] {
+  width: 100%;
+  background: #0d2137;
+  color: #ddd;
+  border: 1px solid #344;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.btn {
+  padding: 5px 8px;
+  border: 1px solid #344;
+  background: #0d2137;
+  color: #ddd;
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 12px;
+  text-align: center;
+  user-select: none;
+}
+.btn:hover { background: #1a3a5c; }
+.btn.active { background: #c0392b; border-color: #c0392b; color: #fff; }
+
+.row { display: flex; gap: 4px; }
+.row .btn { flex: 1; }
+
+.nav-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+}
+.nav-grid .btn { padding: 6px 0; font-size: 15px; }
+.nav-empty { visibility: hidden; }
+
+label { font-size: 11px; color: #888; }
+
+input[type=range] {
+  width: 100%;
+  accent-color: #c0392b;
+  margin-top: 2px;
+}
+
+.stat { font-size: 11px; color: #888; }
+.stat b { color: #ccc; }
+
+#save-btn { background: #1a5c2a; border-color: #27ae60; font-weight: bold; padding: 8px; }
+#save-btn:hover { background: #27ae60; color: #000; }
+
+#status {
+  font-size: 10px;
+  color: #888;
+  min-height: 28px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+.ok { color: #2ecc71; }
+.err { color: #e74c3c; }
+
+#canvas-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  overflow: auto;
+}
+
+#canvas-wrap {
+  position: relative;
+  cursor: crosshair;
+}
+
+#cv-dapi, #cv-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  display: block;
+}
+
+#cv-overlay { cursor: crosshair; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div>
+    <div class="sec">FOV</div>
+    <select id="fov-sel"></select>
+  </div>
+
+  <div>
+    <div class="sec">Navigation (512px)</div>
+    <div class="nav-grid">
+      <div class="nav-empty"></div>
+      <button class="btn" id="nav-u">↑</button>
+      <div class="nav-empty"></div>
+      <button class="btn" id="nav-l">←</button>
+      <button class="btn" id="nav-c" title="先頭に戻る">⌂</button>
+      <button class="btn" id="nav-r">→</button>
+      <div class="nav-empty"></div>
+      <button class="btn" id="nav-d">↓</button>
+      <div class="nav-empty"></div>
+    </div>
+    <div class="stat">位置: <b id="pos-disp">y=0, x=0</b></div>
+  </div>
+
+  <div>
+    <div class="sec">Tool &nbsp; P / E / F</div>
+    <div class="row">
+      <button class="btn active" data-tool="paint">Paint</button>
+      <button class="btn" data-tool="erase">Erase</button>
+      <button class="btn" data-tool="fill">Fill</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="sec">Label ID</div>
+    <input type="number" id="label-id" value="1" min="1" max="65535">
+    <button class="btn" id="new-cell-btn" style="margin-top:4px; width:100%">+ New Cell (max+1)</button>
+  </div>
+
+  <div>
+    <label>Brush: <b id="brush-val">5</b>px &nbsp; [ / ]</label>
+    <input type="range" id="brush-sz" min="1" max="60" value="5">
+  </div>
+
+  <div>
+    <label>Overlay: <b id="opacity-val">60</b>%</label>
+    <input type="range" id="opacity-sl" min="0" max="100" value="60">
+  </div>
+
+  <div>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="scalebar-toggle" checked>
+      スケールバー表示
+    </label>
+  </div>
+
+  <div>
+    <div class="sec">Zoom &nbsp; Wheel / 0=reset</div>
+    <div class="stat">倍率: <b id="zoom-disp">1.0x</b></div>
+    <button class="btn" id="zoom-reset-btn" style="margin-top:4px;width:100%">Reset Zoom (0)</button>
+  </div>
+
+  <div>
+    <div class="sec">ベースマスク</div>
+    <div id="s-source" style="font-size:12px; color:#f39c12; word-break:break-all;">—</div>
+  </div>
+
+  <div>
+    <div class="stat">タイル内細胞数: <b id="s-cells">—</b></div>
+    <div class="stat">Max label (全体): <b id="s-max">—</b></div>
+  </div>
+
+  <button class="btn" id="save-btn">💾 Save　Ctrl+S</button>
+
+  <div id="status">Ready.</div>
+
+  <div style="font-size:10px; color:#555; line-height:1.5">
+    P=Paint E=Erase F=Fill<br>
+    [/]=ブラシサイズ<br>
+    Ctrl+S=保存<br>
+    矢印キー=移動<br>
+    Wheel=ズーム<br>
+    右ドラッグ=パン<br>
+    0=ズームリセット
+  </div>
+</div>
+
+<div id="canvas-area">
+  <div id="canvas-wrap">
+    <canvas id="cv-dapi"></canvas>
+    <canvas id="cv-overlay"></canvas>
+  </div>
+</div>
+
+<script>
+const TILE = 1024;
+const STEP = 512;
+const DISPLAY = 768;
+
+const cvDapi = document.getElementById('cv-dapi');
+const cvOv = document.getElementById('cv-overlay');
+const ctxD = cvDapi.getContext('2d');
+const ctxO = cvOv.getContext('2d');
+
+[cvDapi, cvOv].forEach(c => {
+  c.width = c.height = TILE;
+  c.style.width = c.style.height = DISPLAY + 'px';
+});
+document.getElementById('canvas-wrap').style.width =
+document.getElementById('canvas-wrap').style.height = DISPLAY + 'px';
+
+let fov = null, tileY = 0, tileX = 0, imgH = 0, imgW = 0;
+let labels = null;   // Uint16Array
+let maxLabel = 0;
+let tool = 'paint';
+let brushSz = 5;
+let labelId = 1;
+let opacity = 0.6;
+let drawing = false;
+let dirty = false;
+let pixelSizeUm = 0.18;
+let scaleBarVisible = true;
+let zoomLevel = 1, panX = 0, panY = 0;
+let dapiImg = null;
+let panning = false, panStartX = 0, panStartY = 0, panStartPanX = 0, panStartPanY = 0;
+
+// Golden-ratio HSV color (matches Python colorsys)
+const colorCache = {};
+function lcolor(lbl) {
+  if (!lbl) return null;
+  if (colorCache[lbl]) return colorCache[lbl];
+  const h = (lbl * 0.618033988749895) % 1.0;
+  const s = 0.85, v = 0.95;
+  const i = Math.floor(h * 6), f = h*6-i;
+  const p=v*(1-s), q=v*(1-f*s), t=v*(1-(1-f)*s);
+  let r,g,b;
+  switch(i%6){case 0:r=v;g=t;b=p;break;case 1:r=q;g=v;b=p;break;
+    case 2:r=p;g=v;b=t;break;case 3:r=p;g=q;b=v;break;
+    case 4:r=t;g=p;b=v;break;case 5:r=v;g=p;b=q;break;}
+  const c=[Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+  colorCache[lbl]=c; return c;
+}
+
+function drawScaleBar(ctx) {
+  if (!scaleBarVisible || !pixelSizeUm) return;
+  // At zoomLevel, each canvas pixel covers pixelSizeUm/zoomLevel μm
+  const effectiveUm = pixelSizeUm / zoomLevel;
+  const candidates = [5, 10, 20, 50, 100, 200, 500];
+  const barUm = candidates.find(u => {
+    const cssPx = (u / effectiveUm) * (DISPLAY / TILE);
+    return cssPx >= 100 && cssPx <= 220;
+  });
+  if (!barUm) return;
+
+  const barPx = barUm / effectiveUm;  // length in canvas px (1024 space)
+  const margin = 28;
+  const x = TILE - barPx - margin;
+  const y = TILE - margin;
+
+  // Drop shadow for readability on dark/light backgrounds
+  ctx.shadowColor = 'rgba(0,0,0,0.8)';
+  ctx.shadowBlur = 4;
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'square';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + barPx, y);
+  ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10);
+  ctx.moveTo(x + barPx, y - 10); ctx.lineTo(x + barPx, y + 10);
+  ctx.stroke();
+
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${barUm} μm`, x + barPx / 2, y - 16);
+
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+}
+
+function redrawAll() {
+  if (dapiImg) {
+    const srcW = TILE / zoomLevel;
+    const srcH = TILE / zoomLevel;
+    const sx = Math.max(0, Math.min(panX, TILE - srcW));
+    const sy = Math.max(0, Math.min(panY, TILE - srcH));
+    ctxD.clearRect(0, 0, TILE, TILE);
+    ctxD.drawImage(dapiImg, sx, sy, srcW, srcH, 0, 0, TILE, TILE);
+  }
+  renderOverlay();
+}
+
+function renderOverlay() {
+  if (!labels) return;
+  const id = ctxO.createImageData(TILE, TILE);
+  const d = id.data;
+  const a = Math.round(opacity * 255);
+  const invZoom = 1 / zoomLevel;
+  for (let oy = 0; oy < TILE; oy++) {
+    const sy = Math.min(TILE - 1, Math.floor(panY + oy * invZoom));
+    const rowBase = sy * TILE;
+    const outBase = oy * TILE;
+    for (let ox = 0; ox < TILE; ox++) {
+      const sx = Math.min(TILE - 1, Math.floor(panX + ox * invZoom));
+      const lbl = labels[rowBase + sx];
+      if (!lbl) continue;
+      const [r,g,b] = lcolor(lbl);
+      const b4 = (outBase + ox) * 4;
+      d[b4]=r; d[b4+1]=g; d[b4+2]=b; d[b4+3]=a;
+    }
+  }
+  ctxO.putImageData(id, 0, 0);
+  drawScaleBar(ctxO);
+  updateStats();
+}
+
+function updateStats() {
+  const uniq = new Set();
+  if (labels) for (let i=0;i<labels.length;i++) if(labels[i]) uniq.add(labels[i]);
+  document.getElementById('s-cells').textContent = uniq.size;
+  document.getElementById('s-max').textContent = maxLabel;
+}
+
+function b64toU16(b64) {
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const u8 = new Uint8Array(buf);
+  for (let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+  return new Uint16Array(buf);
+}
+
+function u16toB64(arr) {
+  const u8 = new Uint8Array(arr.buffer);
+  let s = '';
+  for (let i=0;i<u8.length;i++) s+=String.fromCharCode(u8[i]);
+  return btoa(s);
+}
+
+async function loadTile() {
+  status('Loading…');
+  try {
+    const r = await fetch(`/api/tile?fov=${fov}&y=${tileY}&x=${tileX}&size=${TILE}`);
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    tileY = data.y; tileX = data.x;
+    imgH = data.image_h; imgW = data.image_w;
+    maxLabel = data.max_label;
+    dirty = false;
+    document.getElementById('pos-disp').textContent = `y=${tileY}, x=${tileX}`;
+
+    labels = b64toU16(data.labels_b64);
+    document.getElementById('s-source').textContent = data.source || '—';
+    const img = new Image();
+    img.onload = () => { dapiImg = img; redrawAll(); };
+    img.src = 'data:image/png;base64,' + data.dapi_b64;
+    status(`${fov}  y=${tileY} x=${tileX}  読み込み完了`);
+  } catch(e) { status('Error: '+e.message, true); }
+}
+
+async function saveTile() {
+  if (!labels) return;
+  status('Saving…');
+  try {
+    const body = { fov, y: tileY, x: tileX, size: TILE, labels_b64: u16toB64(labels) };
+    const r = await fetch('/api/save', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    dirty = false;
+    maxLabel = data.total_cells;
+    updateStats();
+    status(`保存完了 ✓  (全体 ${data.total_cells} 細胞)`, false, true);
+  } catch(e) { status('保存エラー: '+e.message, true); }
+}
+
+function paintAt(px, py) {
+  const r = brushSz;
+  const val = tool === 'erase' ? 0 : labelId;
+  for (let dy=-r; dy<=r; dy++) {
+    for (let dx=-r; dx<=r; dx++) {
+      if (dx*dx+dy*dy > r*r) continue;
+      const nx=px+dx, ny=py+dy;
+      if (nx<0||nx>=TILE||ny<0||ny>=TILE) continue;
+      labels[ny*TILE+nx] = val;
+    }
+  }
+}
+
+function floodFill(px, py) {
+  const target = labels[py*TILE+px];
+  const fill = tool === 'erase' ? 0 : labelId;
+  if (target === fill) return;
+  const stack = [[px,py]];
+  const vis = new Uint8Array(TILE*TILE);
+  let cnt = 0;
+  while (stack.length && cnt < 60000) {
+    const [cx,cy] = stack.pop();
+    if (cx<0||cx>=TILE||cy<0||cy>=TILE) continue;
+    const idx = cy*TILE+cx;
+    if (vis[idx] || labels[idx]!==target) continue;
+    vis[idx]=1; labels[idx]=fill; cnt++;
+    stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);
+  }
+  if (cnt>=60000) status('Fill: 60000px上限に達しました', true);
+}
+
+function getPos(e) {
+  const rect = cvOv.getBoundingClientRect();
+  const cPx = (e.clientX - rect.left) * TILE / rect.width;
+  const cPy = (e.clientY - rect.top)  * TILE / rect.height;
+  return [
+    Math.max(0, Math.min(TILE - 1, Math.floor(panX + cPx / zoomLevel))),
+    Math.max(0, Math.min(TILE - 1, Math.floor(panY + cPy / zoomLevel))),
+  ];
+}
+
+cvOv.addEventListener('contextmenu', e => e.preventDefault());
+
+cvOv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = cvOv.getBoundingClientRect();
+  const cPx = (e.clientX - rect.left) * TILE / rect.width;
+  const cPy = (e.clientY - rect.top)  * TILE / rect.height;
+  const srcX = panX + cPx / zoomLevel;
+  const srcY = panY + cPy / zoomLevel;
+  const factor = e.deltaY > 0 ? 0.8 : 1.25;
+  zoomLevel = Math.max(1, Math.min(16, zoomLevel * factor));
+  panX = Math.max(0, Math.min(TILE - TILE / zoomLevel, srcX - cPx / zoomLevel));
+  panY = Math.max(0, Math.min(TILE - TILE / zoomLevel, srcY - cPy / zoomLevel));
+  document.getElementById('zoom-disp').textContent = zoomLevel.toFixed(1) + 'x';
+  redrawAll();
+}, { passive: false });
+
+cvOv.addEventListener('mousedown', e => {
+  if (e.button === 2) {
+    panning = true;
+    panStartX = e.clientX; panStartY = e.clientY;
+    panStartPanX = panX; panStartPanY = panY;
+    cvOv.style.cursor = 'grabbing';
+    return;
+  }
+  if (!labels) return;
+  drawing = true; dirty = true;
+  const [px,py] = getPos(e);
+  if (tool === 'fill') { floodFill(px,py); renderOverlay(); }
+  else { paintAt(px,py); renderOverlay(); }
+});
+cvOv.addEventListener('mousemove', e => {
+  if (panning) {
+    const rect = cvOv.getBoundingClientRect();
+    const scale = TILE / rect.width;
+    const dx = (e.clientX - panStartX) * scale / zoomLevel;
+    const dy = (e.clientY - panStartY) * scale / zoomLevel;
+    panX = Math.max(0, Math.min(TILE - TILE / zoomLevel, panStartPanX - dx));
+    panY = Math.max(0, Math.min(TILE - TILE / zoomLevel, panStartPanY - dy));
+    redrawAll();
+    return;
+  }
+  if (!drawing || tool==='fill') return;
+  const [px,py] = getPos(e);
+  paintAt(px,py); renderOverlay();
+});
+cvOv.addEventListener('mouseup', e => {
+  if (panning) { panning = false; cvOv.style.cursor = 'crosshair'; return; }
+  drawing = false;
+});
+cvOv.addEventListener('mouseleave', () => {
+  drawing = false;
+  if (panning) { panning = false; cvOv.style.cursor = 'crosshair'; }
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveTile(); return; }
+  if (e.key==='p'||e.key==='P') setTool('paint');
+  if (e.key==='e'||e.key==='E') setTool('erase');
+  if (e.key==='f'||e.key==='F') setTool('fill');
+  if (e.key===']') bumpBrush(1);
+  if (e.key==='[') bumpBrush(-1);
+  if (e.key==='0') { zoomLevel=1; panX=0; panY=0; document.getElementById('zoom-disp').textContent='1.0x'; redrawAll(); }
+  if (e.key==='ArrowUp')    { e.preventDefault(); nav(-STEP,0); }
+  if (e.key==='ArrowDown')  { e.preventDefault(); nav(STEP,0); }
+  if (e.key==='ArrowLeft')  { e.preventDefault(); nav(0,-STEP); }
+  if (e.key==='ArrowRight') { e.preventDefault(); nav(0,STEP); }
+});
+
+function bumpBrush(d) {
+  const el = document.getElementById('brush-sz');
+  el.value = Math.max(1, Math.min(60, +el.value+d));
+  el.dispatchEvent(new Event('input'));
+}
+
+function setTool(t) {
+  tool = t;
+  document.querySelectorAll('[data-tool]').forEach(b =>
+    b.classList.toggle('active', b.dataset.tool===t));
+}
+
+document.querySelectorAll('[data-tool]').forEach(b =>
+  b.addEventListener('click', ()=>setTool(b.dataset.tool)));
+
+document.getElementById('brush-sz').addEventListener('input', e => {
+  brushSz = +e.target.value;
+  document.getElementById('brush-val').textContent = e.target.value;
+});
+document.getElementById('opacity-sl').addEventListener('input', e => {
+  opacity = +e.target.value/100;
+  document.getElementById('opacity-val').textContent = e.target.value;
+  renderOverlay();
+});
+document.getElementById('scalebar-toggle').addEventListener('change', e => {
+  scaleBarVisible = e.target.checked;
+  renderOverlay();
+});
+document.getElementById('zoom-reset-btn').addEventListener('click', () => {
+  zoomLevel = 1; panX = 0; panY = 0;
+  document.getElementById('zoom-disp').textContent = '1.0x';
+  redrawAll();
+});
+document.getElementById('label-id').addEventListener('change', e => {
+  labelId = Math.max(1, +e.target.value);
+});
+document.getElementById('new-cell-btn').addEventListener('click', ()=>{
+  maxLabel++;
+  labelId = maxLabel;
+  document.getElementById('label-id').value = labelId;
+  updateStats();
+  setTool('paint');
+});
+document.getElementById('save-btn').addEventListener('click', saveTile);
+
+function nav(dy, dx) {
+  tileY = Math.max(0, Math.min(tileY+dy, imgH-TILE));
+  tileX = Math.max(0, Math.min(tileX+dx, imgW-TILE));
+  loadTile();
+}
+document.getElementById('nav-u').addEventListener('click', ()=>nav(-STEP,0));
+document.getElementById('nav-d').addEventListener('click', ()=>nav(STEP,0));
+document.getElementById('nav-l').addEventListener('click', ()=>nav(0,-STEP));
+document.getElementById('nav-r').addEventListener('click', ()=>nav(0,STEP));
+document.getElementById('nav-c').addEventListener('click', ()=>{ tileY=0;tileX=0;loadTile(); });
+
+document.getElementById('fov-sel').addEventListener('change', e => {
+  fov = e.target.value;
+  tileY = 0; tileX = 0;
+  loadTile();
+});
+
+function status(msg, isErr=false, isOk=false) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isErr?'err':(isOk?'ok':'');
+}
+
+async function init() {
+  status('Initializing…');
+  try {
+    const r = await fetch('/api/info');
+    const data = await r.json();
+    if (data.pixel_size_um) pixelSizeUm = data.pixel_size_um;
+    const sel = document.getElementById('fov-sel');
+    for (const f of Object.keys(data.fovs)) {
+      const o = document.createElement('option');
+      o.value = f;
+      o.textContent = `${f}  (${data.fovs[f].n_cells}細胞)`;
+      sel.appendChild(o);
+    }
+    const fovs = Object.keys(data.fovs);
+    if (fovs.length) { fov=fovs[0]; await loadTile(); }
+    else status('FOVが見つかりません', true);
+  } catch(e) { status('Init error: '+e.message, true); }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -58,11 +58,11 @@ class StarDistSegmenter(BaseSegmenter):
         model: str = "2D_versatile_fluo",
         prob_threshold: float = 0.3,
         nms_threshold: float = 0.4,
-        scale: float = 0.25,
+        scale: float = 0.5,
         n_tiles: tuple | None = None,
         gaussian_sigma: float = 5.0,
-        min_diam_um: float = 3.0,
-        max_diam_um: float = 20.0,
+        min_diam_um: float = 4.0,
+        max_diam_um: float = 30.0,
         min_intensity_ratio: float = 1.0,
         pixel_size_um: float = 0.12274,
     ) -> None:
@@ -126,7 +126,8 @@ class StarDistSegmenter(BaseSegmenter):
             diam_um = 2.0 * math.sqrt(r.area / math.pi) * self.pixel_size_um
             if not (self.min_diam_um <= diam_um <= self.max_diam_um):
                 continue
-            if self.min_intensity_ratio > 0 and r.mean_intensity < intensity_threshold:
+            mean_int = getattr(r, "intensity_mean", None) or getattr(r, "mean_intensity", 0.0)
+            if self.min_intensity_ratio > 0 and mean_int < intensity_threshold:
                 continue
             keep.append(r.label)
 
